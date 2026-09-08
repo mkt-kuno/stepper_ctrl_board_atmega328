@@ -1,5 +1,7 @@
 # StepperCtrlBoard
 
+<img width="1280" height="960" alt="1788857599347_re" src="https://github.com/user-attachments/assets/2d3b10f9-8a61-4fed-b8c7-69fce1deb45f" />
+
 Arduino Nano ベースのステッピングモータ制御ボックス。手動スイッチ操作と外部コンピュータ制御の 2 モードに対応し、ボリュームによる速度調整・リミットスイッチによる安全停止機能を備えます。  
 動作の安定のために、Arduino をUSB Serial経由（with Bootloader）ではなく、 Arduino-as-ICSPでICSP経由(without Bootloader)で書き込むことを強く推奨します  
 Auduino-as-ICSPの接続時は、2x3(6pin)の極性にはくれぐれも注意してください(燃えます)。  
