@@ -45,18 +45,18 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define STEP_ACCEL  100000UL
 
 // --- オーバーサンプリング ADC (ISR内累積) ---
-#define ADC_OS_SHIFT 6
-#define ADC_OS_NUM   (1 << ADC_OS_SHIFT)  // 64サンプル累積
+#define ADC_OS_SHIFT 8
+#define ADC_OS_NUM   (1 << ADC_OS_SHIFT)  // 256サンプル累積 (実効約14bit)
 
 // --- ADC割り込み駆動 ---
 // A6 = MUX[3:0] = 0110, A7 = MUX[3:0] = 0111
-// 64サンプルの累積和を保持 (10bit×64 = 最大65472 → 16bitに収まる)
-static volatile uint16_t adc_sum[2];      // [0]=A6(COM), [1]=A7(MAN)
+// 256サンプルの累積和を保持 (10bit×256 = 最大261888 → 32bitで保持)
+static volatile uint32_t adc_sum[2];      // [0]=A6(COM), [1]=A7(MAN)
 static volatile uint8_t  adc_ch = 6;      // 現在の変換チャンネル (6 or 7)
 
 ISR(ADC_vect) {
-  static uint16_t acc = 0;
-  static uint8_t  cnt = 0;
+  static uint32_t acc = 0;
+  static uint16_t cnt = 0;
   uint16_t val = ADC; // ADCL + ADCH を読み取り
   if (cnt == 0) {
     // チャンネル切替直後の初回変換はダミー (S/Hクロストーク対策で捨てる)
@@ -65,7 +65,7 @@ ISR(ADC_vect) {
   } else {
     acc += val;
     if (cnt >= ADC_OS_NUM) {
-      // 64サンプル完了 → 公開してチャンネル切替
+      // 256サンプル完了 → 公開してチャンネル切替
       adc_sum[adc_ch - 6] = acc;
       adc_ch ^= 1; // 6 <-> 7
       ADMUX = (ADMUX & 0xF0) | (adc_ch & 0x0F);
@@ -86,16 +86,6 @@ static void adc_init() {
   // 最初の変換開始
   adc_ch = 6;
   ADCSRA |= (1 << ADSC);
-}
-
-static float adc_read_volts(uint8_t ch) {
-  // ch: 0=A6(COM), 1=A7(MAN)
-  uint16_t sum;
-  cli();
-  sum = adc_sum[ch];
-  sei();
-  // 累積和のまま電圧変換 — サブLSB分解能を保持 (実効約13bit)
-  return 5.0f * sum / (1024.0f * ADC_OS_NUM);
 }
 
 FastAccelStepperEngine engine = FastAccelStepperEngine();
@@ -147,10 +137,19 @@ void loop() {
   bool  ena  = false;
   bool  dir  = false;
   bool  fast = false;
-  float speed = 0;
-  float man_speed = adc_read_volts(1); // ch1 = A7(MAN)
-  float com_speed = adc_read_volts(0); // ch0 = A6(COM)
-  bool  mode      =  FastGPIO::Pin<SW_MODE>::isInputHigh();
+  bool  mode = FastGPIO::Pin<SW_MODE>::isInputHigh();
+  uint32_t rawSum;
+  cli();
+  rawSum = adc_sum[mode ? 0 : 1];  // ch0=A6(COM), ch1=A7(MAN)
+  sei();
+  // 整数EMA (α=1/8): 単純移動平均と同等の平滑化をリングバッファ無しで実現
+  // float演算を使わないためAVRでも軽量 (減算+定数除算のみ)
+  static uint32_t filtSum = 0;
+  static bool filtInit = false;
+  if (!filtInit) { filtSum = rawSum; filtInit = true; }
+  int32_t fdiff = (int32_t)rawSum - (int32_t)filtSum;
+  filtSum += fdiff / 8;
+  float fspeed = 5.0f * filtSum / (1024.0f * ADC_OS_NUM);
   bool  limit_cw  = !FastGPIO::Pin<SW_LIMIT_CW>::isInputHigh();
   bool  limit_ccw = !FastGPIO::Pin<SW_LIMIT_CCW>::isInputHigh();
 
@@ -159,14 +158,12 @@ void loop() {
     ena   = FastGPIO::Pin<SW_COM_ENA>::isInputHigh();
     dir   = FastGPIO::Pin<SW_COM_DIR>::isInputHigh();
     fast  = false;
-    speed = com_speed;
   }
   // Manual
   else {
     ena   = FastGPIO::Pin<SW_MAN_ENA>::isInputHigh();
     dir   = FastGPIO::Pin<SW_MAN_DIR>::isInputHigh();
     fast  = FastGPIO::Pin<SW_MAN_FAST>::isInputHigh();
-    speed = man_speed;
   }
 
   // リミットスイッチ: dir=true → CW, dir=false → CCW
@@ -180,10 +177,10 @@ void loop() {
   FastGPIO::Pin<LED_FAST>::setOutputValue(fast);
 
   // for debug
-  FastGPIO::Pin<LED_SYSTEM>::setOutputValue(speed > SPEED_THRESHOLD);
+  FastGPIO::Pin<LED_SYSTEM>::setOutputValue(fspeed > SPEED_THRESHOLD);
 
   // --- ステップパルス制御 (FastAccelStepper) ---
-  bool shouldRun = ena && (speed > SPEED_THRESHOLD) && !limited;
+  bool shouldRun = ena && (fspeed > SPEED_THRESHOLD) && !limited;
 
   // 方向変更 or 停止時のみパルス停止 → 出力変更 → 再始動の順序を保証
   // FAST 切替は速度変更のみなので force-stop 不要 (加減速で対応)
@@ -200,7 +197,7 @@ void loop() {
 
   if (shouldRun) {
     // 電圧 → 周波数 に変換
-    float ratio = (speed - SPEED_THRESHOLD) / (5.0f - SPEED_THRESHOLD);
+    float ratio = (fspeed - SPEED_THRESHOLD) / (5.0f - SPEED_THRESHOLD);
     if (ratio > 1.0f) ratio = 1.0f;
     uint32_t freq = (uint32_t)(STEP_FREQ_MIN + ratio * (STEP_FREQ_MAX - STEP_FREQ_MIN));
 
@@ -218,7 +215,7 @@ void loop() {
   }
 
   uint32_t activeFreq = prevRunning ? prevFreq : 0;
-  updateLcdContent(ena, dir, fast, speed, mode, limited, activeFreq);
+  updateLcdContent(ena, dir, fast, fspeed, mode, limited, activeFreq);
   lcd.update();
 }
 
@@ -240,22 +237,29 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
   if (limited) {
     lcd.setText(1, "** LIMITED **   ");
   } else {
-    int sv = (int)(speed * 100.0f + 0.5f); // 10mV単位に丸め
+    // 表示ヒステリシス: ±1Hz / ±0.01V のちらつきを抑える (モーター制御側は無加工で追従)
+    static uint32_t dispFreq = 0;
+    uint32_t df = (freq >= dispFreq) ? (freq - dispFreq) : (dispFreq - freq);
+    if (df >= 2) dispFreq = freq;
+    int sv = (int)(speed * 1000.0f + 0.5f); // 1mV単位に丸め
     if (sv < 0) sv = 0;
+    static int dispSv = -1;
+    if (dispSv < 0) dispSv = sv;
+    else { int ds = sv - dispSv; if (ds >= 10 || ds <= -10) dispSv = sv; }
+    sv = dispSv;
 
-    // 手動文字列構築 — snprintf のスタック消費を回避
-    // "X.YY V ZZZZZ PPS" (16文字)
+    // "X.YYYV ZZZZZ PPS" (16文字) — V前のスペースを削って小数点以下3桁化
     static char buf[17];
-    // 電圧部: "X.YY V " (7文字) — 1mV位はADC分解能未満のため非表示
-    buf[0] = '0' + (char)(sv / 100);
+    // 電圧部: "X.YYYV" (6文字) — 1mV単位
+    buf[0] = '0' + (char)(sv / 1000);
     buf[1] = '.';
-    buf[2] = '0' + (char)((sv / 10) % 10);
-    buf[3] = '0' + (char)(sv % 10);
-    buf[4] = ' ';
+    buf[2] = '0' + (char)((sv / 100) % 10);
+    buf[3] = '0' + (char)((sv / 10) % 10);
+    buf[4] = '0' + (char)(sv % 10);
     buf[5] = 'V';
     buf[6] = ' ';
     // PPS部: "ZZZZZ PPS" (9文字) — 5桁右詰め・小数点なし
-    uint32_t f = freq;
+    uint32_t f = dispFreq;
     for (int i = 11; i >= 7; i--) {
       buf[i] = (f > 0 || i == 11) ? ('0' + (char)(f % 10)) : ' ';
       f /= 10;
