@@ -269,16 +269,8 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
   if (limited) {
     lcd.setText(1, "** LIMITED **   ");
   } else {
-    // 表示ヒステリシス: ±1Hz / ±0.01V のちらつきを抑える (モーター制御側は無加工で追従)
-    static uint32_t dispFreq = 0;
-    uint32_t df = (freq >= dispFreq) ? (freq - dispFreq) : (dispFreq - freq);
-    if (df >= 2) dispFreq = freq;
     int sv = (int)(speed * 1000.0f + 0.5f); // 1mV単位に丸め
     if (sv < 0) sv = 0;
-    static int dispSv = -1;
-    if (dispSv < 0) dispSv = sv;
-    else { int ds = sv - dispSv; if (ds >= 10 || ds <= -10) dispSv = sv; }
-    sv = dispSv;
 
     // "X.YYYV ZZZZZ PPS" (16文字) — V前のスペースを削って小数点以下3桁化
     static char buf[17];
@@ -291,7 +283,7 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
     buf[5] = 'V';
     buf[6] = ' ';
     // PPS部: "ZZZZZ PPS" (9文字) — 5桁右詰め・小数点なし
-    uint32_t f = dispFreq;
+    uint32_t f = freq;
     for (int i = 11; i >= 7; i--) {
       buf[i] = (f > 0 || i == 11) ? ('0' + (char)(f % 10)) : ' ';
       f /= 10;
