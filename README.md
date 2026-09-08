@@ -1,4 +1,4 @@
-# stepper_ctrl_board_mega328
+# stepper_ctrl_board_atmega328
 
 <img width="1280" height="960" alt="1788857599347_re" src="https://github.com/user-attachments/assets/2d3b10f9-8a61-4fed-b8c7-69fce1deb45f" />
 
