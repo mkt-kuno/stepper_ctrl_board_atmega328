@@ -100,6 +100,9 @@ void setup() {
   // MAN_ENA,MAN_DIR
   pinMode(SW_MAN_ENA,    INPUT_PULLUP);
   pinMode(SW_MAN_DIR,    INPUT_PULLUP);
+  // COM_ENA,COM_DIR (FastGPIOで読む入力 — 手動系と同様INPUT_PULLUPで確定させる)
+  pinMode(SW_COM_ENA,    INPUT_PULLUP);
+  pinMode(SW_COM_DIR,    INPUT_PULLUP);
   // LED_MODE, LED_ENA, LED_DIR, LED_FAST
   pinMode(LED_MODE,   OUTPUT);
   pinMode(LED_ENA,    OUTPUT);
@@ -176,8 +179,7 @@ void loop() {
   FastGPIO::Pin<LED_DIR>::setOutputValue(dir);
   FastGPIO::Pin<LED_FAST>::setOutputValue(fast);
 
-  // for debug
-  FastGPIO::Pin<LED_SYSTEM>::setOutputValue(fspeed > SPEED_THRESHOLD);
+  // LED_SYSTEM は予備 (デバッグ表示なし)
 
   // --- ステップパルス制御 (FastAccelStepper) ---
   bool shouldRun = ena && (fspeed > SPEED_THRESHOLD) && !limited;
