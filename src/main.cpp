@@ -154,8 +154,37 @@ void loop() {
   int32_t fdiff = (int32_t)rawSum - (int32_t)filtSum;
   filtSum += fdiff / 8;
   float fspeed = 5.0f * filtSum / (1024.0f * ADC_OS_NUM);
-  bool  limit_cw  = !FastGPIO::Pin<SW_LIMIT_CW>::isInputHigh();
-  bool  limit_ccw = !FastGPIO::Pin<SW_LIMIT_CCW>::isInputHigh();
+  // --- リミットスイッチ デバウンス (高速トリップ + 20msオフディレイ) ---
+  // ON(KILL確定): 連続4回LOW (約0.5〜1ms) / OFF(解除): 20ms連続HIGH
+  // ノンブロッキング (loop毎に1サンプルずつ履歴更新)
+  static uint8_t  limHistCw = 0xFF, limHistCcw = 0xFF;  // 1=HIGH(非接触)
+  static uint32_t limFreeSinceCw = 0, limFreeSinceCcw = 0;
+  static bool     limStateCw = false, limStateCcw = false;
+  uint32_t nowMs = millis();
+  limHistCw  = (limHistCw  << 1) | (FastGPIO::Pin<SW_LIMIT_CW>::isInputHigh()  ? 1 : 0);
+  limHistCcw = (limHistCcw << 1) | (FastGPIO::Pin<SW_LIMIT_CCW>::isInputHigh() ? 1 : 0);
+  if ((limHistCw & 0x0F) == 0x00) {
+    limStateCw = true;
+    limFreeSinceCw = nowMs;
+  } else if (limStateCw) {
+    if (limHistCw == 0xFF) {
+      if ((uint32_t)(nowMs - limFreeSinceCw) >= 20) limStateCw = false;
+    } else {
+      limFreeSinceCw = nowMs;  // LOW混じり → 解除タイマーリセット
+    }
+  }
+  if ((limHistCcw & 0x0F) == 0x00) {
+    limStateCcw = true;
+    limFreeSinceCcw = nowMs;
+  } else if (limStateCcw) {
+    if (limHistCcw == 0xFF) {
+      if ((uint32_t)(nowMs - limFreeSinceCcw) >= 20) limStateCcw = false;
+    } else {
+      limFreeSinceCcw = nowMs;  // LOW混じり → 解除タイマーリセット
+    }
+  }
+  bool  limit_cw  = limStateCw;
+  bool  limit_ccw = limStateCcw;
 
   // Computer
   if (mode) {
