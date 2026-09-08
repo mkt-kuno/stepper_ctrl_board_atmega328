@@ -45,12 +45,12 @@ void updateLcdContent(bool ena, bool dir, bool fast, float speed,
 #define STEP_ACCEL  100000UL
 
 // --- オーバーサンプリング ADC (ISR内累積) ---
-#define ADC_OS_SHIFT 8
-#define ADC_OS_NUM   (1 << ADC_OS_SHIFT)  // 256サンプル累積 (実効約14bit)
+#define ADC_OS_SHIFT 9
+#define ADC_OS_NUM   (1 << ADC_OS_SHIFT)  // 512サンプル累積 (実効約14.5bit)
 
 // --- ADC割り込み駆動 ---
 // A6 = MUX[3:0] = 0110, A7 = MUX[3:0] = 0111
-// 256サンプルの累積和を保持 (10bit×256 = 最大261888 → 32bitで保持)
+// 512サンプルの累積和を保持 (10bit×512 = 最大523776 → 32bitで保持)
 static volatile uint32_t adc_sum[2];      // [0]=A6(COM), [1]=A7(MAN)
 static volatile uint8_t  adc_ch = 6;      // 現在の変換チャンネル (6 or 7)
 
@@ -65,7 +65,7 @@ ISR(ADC_vect) {
   } else {
     acc += val;
     if (cnt >= ADC_OS_NUM) {
-      // 256サンプル完了 → 公開してチャンネル切替
+      // 512サンプル完了 → 公開してチャンネル切替
       adc_sum[adc_ch - 6] = acc;
       adc_ch ^= 1; // 6 <-> 7
       ADMUX = (ADMUX & 0xF0) | (adc_ch & 0x0F);
@@ -80,9 +80,10 @@ ISR(ADC_vect) {
 static void adc_init() {
   // AVcc基準, チャンネル6
   ADMUX  = (1 << REFS0) | 6;
-  // ADC有効, 割り込み有効, プリスケーラ128 (125kHz @ 16MHz)
+  // ADC有効, 割り込み有効, プリスケーラ64 (250kHz @ 16MHz)
+  // 512サンプル化による更新周期の延伸を相殺し、約53ms周期を維持する
   ADCSRA = (1 << ADEN) | (1 << ADIE)
-         | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+         | (1 << ADPS2) | (1 << ADPS1);
   // 最初の変換開始
   adc_ch = 6;
   ADCSRA |= (1 << ADSC);
