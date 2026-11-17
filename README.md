@@ -82,17 +82,37 @@ FastGPIO と ADC 割り込みにより、メインループの所要時間を大
 ### 必要なもの
 
 - [PlatformIO](https://platformio.org/) (CLI または VS Code 拡張)
-- USBasp プログラマ
-- Arduino Nano (ATmega328P)
+- ICSP プログラマ (USBasp / Arduino-as-ICSP 等の STK500v1 互換)
+- Arduino Nano (ATmega328P) または ATmega328PB
+
+### ビルド環境 (nobootloader / bootloader)
+
+MCU (`atmega328p` / `atmega328pb`) × ブートローダ有無 の 4 環境を用意しています。
+既定は `atmega328p-nobootloader` (`platformio.ini` の `default_envs`) です。
+
+| 環境 | 書き込み経路 | 特徴 |
+|------|------------|------|
+| `*-nobootloader` | ICSP (stk500v1 @19200) | 本プロジェクト推奨構成。ブートローダ不要、書き込み毎にチップイレーズ (`-e`) |
+| `*-bootloader` | USB シリアル (COM3 @115200) | Arduino 互換ブートローダ (MiniCore 同梱 optiboot_flash 系統) 前提。チップイレーズなしでブートローダを保持、フラッシュ使用上限 32,256 B (boot 領域 512 B 分) |
 
 ### コマンド
 
 ```bash
-# ビルド
+# ビルド (既定環境 = atmega328p-nobootloader)
 pio run
 
-# 書き込み (USBasp)
+# 書き込み (ICSP)
 pio run --target upload
+
+# 328PB / ブートローダ経由 (USB シリアル COM3)
+pio run -e atmega328pb-bootloader --target upload
+```
+
+`*-bootloader` 環境は、板に既に Optiboot 等が入っている場合はそのまま書き込めます。
+ブートローダ未搭載のチップでは初回のみ ICSP でブートローダ + fuse (BOOTRST 未焼き込み) を書き込んでください:
+
+```bash
+pio run -e atmega328pb-bootloader -t bootloader --upload-protocol stk500v1 --upload-port <プログラマのCOM>
 ```
 
 ## ライセンス
